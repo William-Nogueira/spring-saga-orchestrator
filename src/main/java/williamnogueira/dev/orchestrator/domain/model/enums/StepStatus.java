@@ -1,4 +1,4 @@
-package williamnogueira.dev.orchestrator.domain;
+package williamnogueira.dev.orchestrator.domain.model.enums;
 
 import java.util.EnumSet;
 import java.util.Set;

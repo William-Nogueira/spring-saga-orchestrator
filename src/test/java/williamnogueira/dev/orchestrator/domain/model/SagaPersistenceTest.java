@@ -1,13 +1,16 @@
-package williamnogueira.dev.orchestrator.domain;
+package williamnogueira.dev.orchestrator.domain.model;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.transaction.annotation.Transactional;
 import williamnogueira.dev.orchestrator.TestcontainersConfiguration;
+import williamnogueira.dev.orchestrator.domain.model.enums.SagaStatus;
+import williamnogueira.dev.orchestrator.domain.model.enums.StepStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
@@ -24,6 +27,7 @@ class SagaPersistenceTest {
     private EntityManager entityManager;
 
     @Test
+    @DisplayName("a saga round-trips through postgres with its steps in order")
     void savesAndReloadsSagaWithOrderedSteps() {
         var saga = new SagaEntity("payment", "{\"orderId\":\"42\",\"amount\":100}");
         saga.addStep("authorize-funds", "void-authorization");
@@ -42,7 +46,7 @@ class SagaPersistenceTest {
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getVersion()).isNotNull();
         assertThat(reloaded.getSteps())
-                .extracting(SagaStep::getSequence, SagaStep::getName, SagaStep::getCompensation, SagaStep::getStatus)
+                .extracting(SagaStepEntity::getSequence, SagaStepEntity::getName, SagaStepEntity::getCompensation, SagaStepEntity::getStatus)
                 .containsExactly(
                         tuple(0, "authorize-funds", "void-authorization", StepStatus.PENDING),
                         tuple(1, "capture-payment", "refund", StepStatus.PENDING),

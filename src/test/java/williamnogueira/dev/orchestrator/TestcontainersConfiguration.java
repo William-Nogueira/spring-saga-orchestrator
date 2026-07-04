@@ -21,5 +21,4 @@ public class TestcontainersConfiguration {
     RabbitMQContainer rabbitContainer() {
         return new RabbitMQContainer(DockerImageName.parse("rabbitmq:4.1-management-alpine"));
     }
-
 }

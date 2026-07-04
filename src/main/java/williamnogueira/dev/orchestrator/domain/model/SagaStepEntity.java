@@ -1,4 +1,4 @@
-package williamnogueira.dev.orchestrator.domain;
+package williamnogueira.dev.orchestrator.domain.model;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -13,7 +13,7 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
+import williamnogueira.dev.orchestrator.domain.model.enums.StepStatus;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -22,7 +22,7 @@ import java.util.UUID;
 @Table(name = "saga_step")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class SagaStep {
+public class SagaStepEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -36,21 +36,31 @@ public class SagaStep {
     private String name;
     private String compensation;
 
-    @Setter
     @Enumerated(EnumType.STRING)
     private StepStatus status;
 
-    @Setter
     private int attempts;
-
-    @Setter
     private Instant dispatchedAt;
 
-    SagaStep(SagaEntity saga, int sequence, String name, String compensation) {
+    SagaStepEntity(SagaEntity saga, int sequence, String name, String compensation) {
         this.saga = saga;
         this.sequence = sequence;
         this.name = name;
         this.compensation = compensation;
         this.status = StepStatus.PENDING;
+    }
+
+    public void transitionTo(StepStatus target) {
+        if (!status.allowedTransitions().contains(target)) {
+            throw new IllegalStateException("step '%s' cannot transition from %s to %s".formatted(name, status, target));
+        }
+
+        this.status = target;
+    }
+
+    public void markDispatched(Instant when) {
+        transitionTo(StepStatus.RUNNING);
+        this.attempts++;
+        this.dispatchedAt = when;
     }
 }

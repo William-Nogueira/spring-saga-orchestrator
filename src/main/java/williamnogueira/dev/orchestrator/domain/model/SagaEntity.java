@@ -1,4 +1,4 @@
-package williamnogueira.dev.orchestrator.domain;
+package williamnogueira.dev.orchestrator.domain.model;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
@@ -14,13 +14,15 @@ import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import williamnogueira.dev.orchestrator.domain.model.enums.SagaStatus;
+import williamnogueira.dev.orchestrator.domain.model.enums.StepStatus;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Entity
@@ -35,13 +37,12 @@ public class SagaEntity {
     private String name;
     private String payload;
 
-    @Setter
     @Enumerated(EnumType.STRING)
     private SagaStatus status;
 
     @OneToMany(mappedBy = "saga", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("sequence")
-    private final List<SagaStep> steps = new ArrayList<>();
+    private final List<SagaStepEntity> steps = new ArrayList<>();
 
     @CreationTimestamp
     private Instant createdAt;
@@ -59,6 +60,22 @@ public class SagaEntity {
     }
 
     public void addStep(String name, String compensation) {
-        steps.add(new SagaStep(this, steps.size(), name, compensation));
+        steps.add(new SagaStepEntity(this, steps.size(), name, compensation));
+    }
+
+    public void transitionTo(SagaStatus target) {
+        if (!status.allowedTransitions().contains(target)) {
+            throw new IllegalStateException("saga %s cannot transition from %s to %s".formatted(id, status, target));
+        }
+
+        this.status = target;
+    }
+
+    public Optional<SagaStepEntity> nextPendingStep() {
+        return steps.stream().filter(step -> step.getStatus() == StepStatus.PENDING).findFirst();
+    }
+
+    public Optional<SagaStepEntity> findStep(UUID stepId) {
+        return steps.stream().filter(step -> stepId.equals(step.getId())).findFirst();
     }
 }
