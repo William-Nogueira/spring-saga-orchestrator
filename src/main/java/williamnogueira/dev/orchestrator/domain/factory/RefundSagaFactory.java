@@ -29,6 +29,7 @@ public class RefundSagaFactory implements SagaFactory {
         var saga = new SagaEntity(SAGA_NAME, payload.toString());
         saga.addStep(ISSUE_REFUND, RECLAIM_REFUND);
         saga.addStep(REVERSE_LEDGER_ENTRY, REPOST_LEDGER_ENTRY);
+
         return saga;
     }
 }

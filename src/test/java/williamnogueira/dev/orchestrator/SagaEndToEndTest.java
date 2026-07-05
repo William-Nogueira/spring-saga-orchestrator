@@ -56,17 +56,33 @@ class SagaEndToEndTest {
     }
 
     @Test
-    @DisplayName("a declined authorization fails the saga at the first step")
-    void authorizationDeclineFailsTheSaga() throws InterruptedException {
+    @DisplayName("a declined authorization rolls the saga back with nothing to compensate")
+    void authorizationDeclineCompensatesTheSaga() throws InterruptedException {
         var sagaId = sagaOrchestrator
                 .start(PAYMENT_FACTORY.create(MAPPER.readTree("{\"orderId\":\"e2e-2\",\"amount\":999999,\"currency\":\"BRL\"}")))
                 .getId();
 
         var saga = awaitTerminalState(sagaId);
 
-        assertThat(saga.getStatus()).isEqualTo(SagaStatus.FAILED);
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.COMPENSATED);
         assertThat(saga.getSteps().getFirst().getStatus()).isEqualTo(StepStatus.FAILED);
         assertThat(saga.getSteps().get(1).getStatus()).isEqualTo(StepStatus.PENDING);
+        assertThat(saga.getSteps().get(2).getStatus()).isEqualTo(StepStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("a declined capture voids the authorization over real queues")
+    void captureDeclineCompensatesTheAuthorization() throws InterruptedException {
+        var sagaId = sagaOrchestrator
+                .start(PAYMENT_FACTORY.create(MAPPER.readTree(
+                        "{\"orderId\":\"e2e-3\",\"amount\":100,\"currency\":\"BRL\",\"failCapture\":true}")))
+                .getId();
+
+        var saga = awaitTerminalState(sagaId);
+
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.COMPENSATED);
+        assertThat(saga.getSteps().getFirst().getStatus()).isEqualTo(StepStatus.COMPENSATED);
+        assertThat(saga.getSteps().get(1).getStatus()).isEqualTo(StepStatus.FAILED);
         assertThat(saga.getSteps().get(2).getStatus()).isEqualTo(StepStatus.PENDING);
     }
 

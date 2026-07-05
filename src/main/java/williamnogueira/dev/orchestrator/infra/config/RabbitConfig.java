@@ -25,6 +25,9 @@ public class RabbitConfig {
     public static final String AUTHORIZE_FUNDS_QUEUE = COMMAND_QUEUE_PREFIX + PaymentSagaFactory.AUTHORIZE_FUNDS;
     public static final String CAPTURE_PAYMENT_QUEUE = COMMAND_QUEUE_PREFIX + PaymentSagaFactory.CAPTURE_PAYMENT;
     public static final String POST_TO_LEDGER_QUEUE = COMMAND_QUEUE_PREFIX + PaymentSagaFactory.POST_TO_LEDGER;
+    public static final String VOID_AUTHORIZATION_QUEUE = COMMAND_QUEUE_PREFIX + PaymentSagaFactory.VOID_AUTHORIZATION;
+    public static final String REFUND_QUEUE = COMMAND_QUEUE_PREFIX + PaymentSagaFactory.REFUND;
+    public static final String REVERSE_LEDGER_ENTRY_QUEUE = COMMAND_QUEUE_PREFIX + PaymentSagaFactory.REVERSE_LEDGER_ENTRY;
 
     @Bean
     public Declarables sagaTopology() {
@@ -38,7 +41,11 @@ public class RabbitConfig {
                 replyQueue,
                 BindingBuilder.bind(replyQueue).to(replies).with(REPLY_ROUTING_KEY)));
 
-        for (var step : List.of(PaymentSagaFactory.AUTHORIZE_FUNDS, PaymentSagaFactory.CAPTURE_PAYMENT, PaymentSagaFactory.POST_TO_LEDGER)) {
+        var paymentSteps = List.of(
+                PaymentSagaFactory.AUTHORIZE_FUNDS, PaymentSagaFactory.CAPTURE_PAYMENT, PaymentSagaFactory.POST_TO_LEDGER,
+                PaymentSagaFactory.VOID_AUTHORIZATION, PaymentSagaFactory.REFUND, PaymentSagaFactory.REVERSE_LEDGER_ENTRY);
+
+        for (var step : paymentSteps) {
             var queue = QueueBuilder.durable(COMMAND_QUEUE_PREFIX + step).build();
             declarableList.add(queue);
             declarableList.add(BindingBuilder.bind(queue).to(commands).with(step));

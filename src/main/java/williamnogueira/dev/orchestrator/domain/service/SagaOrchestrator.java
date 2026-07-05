@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import williamnogueira.dev.orchestrator.domain.model.SagaEntity;
 import williamnogueira.dev.orchestrator.domain.model.SagaRepository;
+import williamnogueira.dev.orchestrator.domain.model.SagaStepEntity;
 import williamnogueira.dev.orchestrator.domain.model.dto.StepCommand;
 import williamnogueira.dev.orchestrator.domain.model.dto.StepReply;
 import williamnogueira.dev.orchestrator.domain.model.enums.SagaStatus;
@@ -45,20 +46,60 @@ public class SagaOrchestrator {
         }
 
         var step = saga.findStep(reply.stepId()).orElse(null);
-        if (isNull(step) || step.getStatus() != StepStatus.RUNNING) {
-            log.warn("ignoring duplicate or late reply for saga {} step {}", reply.sagaId(), reply.stepId());
+        if (isNull(step)) {
+            log.warn("ignoring reply for unknown step {} of saga {}", reply.stepId(), reply.sagaId());
             return;
         }
 
+        switch (step.getStatus()) {
+            case RUNNING -> onStepReply(saga, step, reply);
+            case COMPENSATING -> onCompensationReply(saga, step, reply);
+            default -> log.warn("ignoring duplicate or late reply for saga {} step {}", reply.sagaId(), reply.stepId());
+        }
+    }
+
+    private void onStepReply(SagaEntity saga, SagaStepEntity step, StepReply reply) {
         if (reply.failure()) {
             step.transitionTo(StepStatus.FAILED);
-            saga.transitionTo(SagaStatus.FAILED);
-            log.warn("saga {} failed at step '{}': {}", saga.getId(), step.getName(), reply.reason());
+            log.warn("saga {} failed at step '{}': {}; compensating", saga.getId(), step.getName(), reply.reason());
+            beginCompensation(saga);
             return;
         }
 
         step.transitionTo(StepStatus.COMPLETED);
         dispatchNextStep(saga);
+    }
+
+    private void onCompensationReply(SagaEntity saga, SagaStepEntity step, StepReply reply) {
+        if (reply.failure()) {
+            step.transitionTo(StepStatus.FAILED);
+            saga.transitionTo(SagaStatus.FAILED);
+            log.error("compensation '{}' of saga {} failed: {}; manual intervention required",
+                    step.getCompensation(), saga.getId(), reply.reason());
+            return;
+        }
+
+        step.transitionTo(StepStatus.COMPENSATED);
+        dispatchNextCompensation(saga);
+    }
+
+    private void beginCompensation(SagaEntity saga) {
+        saga.transitionTo(SagaStatus.COMPENSATING);
+        dispatchNextCompensation(saga);
+    }
+
+    private void dispatchNextCompensation(SagaEntity saga) {
+        saga.lastCompletedStep().ifPresentOrElse(
+                step -> {
+                    step.markCompensating(Instant.now());
+                    dispatchAfterCommit(
+                            new StepCommand(saga.getId(), step.getId(), step.getCompensation(), saga.getPayload()),
+                            step.getAttempts());
+                },
+                () -> {
+                    saga.transitionTo(SagaStatus.COMPENSATED);
+                    log.info("saga {} compensated", saga.getId());
+                });
     }
 
     private void dispatchNextStep(SagaEntity saga) {
@@ -83,13 +124,23 @@ public class SagaOrchestrator {
         }
 
         var step = saga.findStep(stepId).orElse(null);
-        if (isNull(step) || step.getStatus() != StepStatus.RUNNING || step.getAttempts() != attempt) {
+        if (isNull(step) || step.getAttempts() != attempt) {
             return;
         }
 
-        step.transitionTo(StepStatus.FAILED);
-        saga.transitionTo(SagaStatus.FAILED);
-        log.warn("step '{}' of saga {} got no reply in time; saga failed", step.getName(), sagaId);
+        if (step.getStatus() == StepStatus.RUNNING) {
+            step.transitionTo(StepStatus.FAILED);
+            log.warn("step '{}' of saga {} got no reply in time; compensating", step.getName(), sagaId);
+            beginCompensation(saga);
+            return;
+        }
+
+        if (step.getStatus() == StepStatus.COMPENSATING) {
+            step.transitionTo(StepStatus.FAILED);
+            saga.transitionTo(SagaStatus.FAILED);
+            log.error("compensation '{}' of saga {} got no reply in time; manual intervention required",
+                    step.getCompensation(), sagaId);
+        }
     }
 
     private void dispatchAfterCommit(StepCommand command, int attempt) {

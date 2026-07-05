@@ -75,6 +75,12 @@ public class SagaEntity {
         return steps.stream().filter(step -> step.getStatus() == StepStatus.PENDING).findFirst();
     }
 
+    public Optional<SagaStepEntity> lastCompletedStep() {
+        return steps.stream()
+                .filter(step -> step.getStatus() == StepStatus.COMPLETED)
+                .reduce((_, second) -> second);
+    }
+
     public Optional<SagaStepEntity> findStep(UUID stepId) {
         return steps.stream().filter(step -> stepId.equals(step.getId())).findFirst();
     }

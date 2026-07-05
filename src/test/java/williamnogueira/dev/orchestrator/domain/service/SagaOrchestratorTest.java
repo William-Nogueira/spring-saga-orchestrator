@@ -105,17 +105,65 @@ class SagaOrchestratorTest {
     }
 
     @Test
-    @DisplayName("a failure reply fails the step and the saga")
-    void failureReplyFailsTheSaga() {
+    @DisplayName("a failure with nothing completed ends COMPENSATED with no compensation dispatches")
+    void failureWithNothingCompletedEndsCompensated() {
         var sagaId = sagaOrchestrator.start(paymentSaga()).getId();
 
         sagaOrchestrator.onReply(StepReply.failure(sagaId, commandDispatcher.lastCommand().stepId(), "card declined"));
 
         var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow();
-        assertThat(saga.getStatus()).isEqualTo(SagaStatus.FAILED);
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.COMPENSATED);
         assertThat(saga.getSteps().getFirst().getStatus()).isEqualTo(StepStatus.FAILED);
         assertThat(saga.getSteps().get(1).getStatus()).isEqualTo(StepStatus.PENDING);
         assertThat(commandDispatcher.commands()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("a failure compensates the completed steps in reverse order")
+    void failureCompensatesCompletedStepsInReverse() {
+        var sagaId = sagaOrchestrator.start(paymentSaga()).getId();
+
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+        sagaOrchestrator.onReply(StepReply.failure(sagaId, commandDispatcher.lastCommand().stepId(), "ledger unavailable"));
+
+        assertThat(commandDispatcher.lastCommand().stepName()).isEqualTo(PaymentSagaFactory.REFUND);
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+
+        assertThat(commandDispatcher.lastCommand().stepName()).isEqualTo(PaymentSagaFactory.VOID_AUTHORIZATION);
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+
+        var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow();
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.COMPENSATED);
+        assertThat(saga.getSteps())
+                .extracting(SagaStepEntity::getStatus)
+                .containsExactly(StepStatus.COMPENSATED, StepStatus.COMPENSATED, StepStatus.FAILED);
+        assertThat(commandDispatcher.commands())
+                .extracting(StepCommand::stepName)
+                .containsExactly(
+                        PaymentSagaFactory.AUTHORIZE_FUNDS,
+                        PaymentSagaFactory.CAPTURE_PAYMENT,
+                        PaymentSagaFactory.POST_TO_LEDGER,
+                        PaymentSagaFactory.REFUND,
+                        PaymentSagaFactory.VOID_AUTHORIZATION);
+    }
+
+    @Test
+    @DisplayName("a failing compensation fails the saga for manual intervention")
+    void failedCompensationFailsTheSaga() {
+        var sagaId = sagaOrchestrator.start(paymentSaga()).getId();
+
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+        sagaOrchestrator.onReply(StepReply.failure(sagaId, commandDispatcher.lastCommand().stepId(), "capture declined"));
+
+        assertThat(commandDispatcher.lastCommand().stepName()).isEqualTo(PaymentSagaFactory.VOID_AUTHORIZATION);
+        sagaOrchestrator.onReply(StepReply.failure(sagaId, commandDispatcher.lastCommand().stepId(), "void rejected"));
+
+        var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow();
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.FAILED);
+        assertThat(saga.getSteps())
+                .extracting(SagaStepEntity::getStatus)
+                .containsExactly(StepStatus.FAILED, StepStatus.FAILED, StepStatus.PENDING);
     }
 
     @Test

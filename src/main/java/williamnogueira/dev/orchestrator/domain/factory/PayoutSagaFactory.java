@@ -33,6 +33,7 @@ public class PayoutSagaFactory implements SagaFactory {
         saga.addStep(RESERVE_MERCHANT_BALANCE, RELEASE_MERCHANT_BALANCE);
         saga.addStep(TRANSFER_FUNDS, REVERSE_TRANSFER);
         saga.addStep(RECORD_SETTLEMENT, REVERSE_SETTLEMENT);
+
         return saga;
     }
 }

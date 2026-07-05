@@ -63,4 +63,10 @@ public class SagaStepEntity {
         this.attempts++;
         this.dispatchedAt = when;
     }
+
+    public void markCompensating(Instant when) {
+        transitionTo(StepStatus.COMPENSATING);
+        this.attempts++;
+        this.dispatchedAt = when;
+    }
 }

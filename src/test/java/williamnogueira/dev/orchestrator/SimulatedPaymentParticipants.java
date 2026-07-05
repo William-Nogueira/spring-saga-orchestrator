@@ -26,19 +26,43 @@ public class SimulatedPaymentParticipants {
         var reply = amount.compareTo(AUTHORIZATION_LIMIT) > 0
                 ? StepReply.failure(command.sagaId(), command.stepId(), "amount exceeds authorization limit")
                 : StepReply.success(command.sagaId(), command.stepId());
+
         log.info("simulated authorization for saga {}: success={}", command.sagaId(), reply.success());
         reply(reply);
     }
 
     @RabbitListener(queues = RabbitConfig.CAPTURE_PAYMENT_QUEUE)
     void capture(StepCommand command) {
-        log.info("simulated capture for saga {}", command.sagaId());
-        reply(StepReply.success(command.sagaId(), command.stepId()));
+        var failCapture = objectMapper.readTree(command.payload()).path("failCapture");
+        var reply = failCapture.isBoolean() && failCapture.booleanValue()
+                ? StepReply.failure(command.sagaId(), command.stepId(), "capture declined by processor")
+                : StepReply.success(command.sagaId(), command.stepId());
+
+        log.info("simulated capture for saga {}: success={}", command.sagaId(), reply.success());
+        reply(reply);
     }
 
     @RabbitListener(queues = RabbitConfig.POST_TO_LEDGER_QUEUE)
     void postToLedger(StepCommand command) {
         log.info("simulated ledger posting for saga {}", command.sagaId());
+        reply(StepReply.success(command.sagaId(), command.stepId()));
+    }
+
+    @RabbitListener(queues = RabbitConfig.VOID_AUTHORIZATION_QUEUE)
+    void voidAuthorization(StepCommand command) {
+        log.info("simulated authorization void for saga {}", command.sagaId());
+        reply(StepReply.success(command.sagaId(), command.stepId()));
+    }
+
+    @RabbitListener(queues = RabbitConfig.REFUND_QUEUE)
+    void refund(StepCommand command) {
+        log.info("simulated refund for saga {}", command.sagaId());
+        reply(StepReply.success(command.sagaId(), command.stepId()));
+    }
+
+    @RabbitListener(queues = RabbitConfig.REVERSE_LEDGER_ENTRY_QUEUE)
+    void reverseLedgerEntry(StepCommand command) {
+        log.info("simulated ledger reversal for saga {}", command.sagaId());
         reply(StepReply.success(command.sagaId(), command.stepId()));
     }
 

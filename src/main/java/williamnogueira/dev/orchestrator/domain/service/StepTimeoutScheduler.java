@@ -27,8 +27,10 @@ public class StepTimeoutScheduler {
     }
 
     public void scheduleTimeoutCheck(UUID sagaId, UUID stepId, int attempt) {
+        var checkAt = Instant.now().plus(stepTimeout);
         taskScheduler.schedule(
                 () -> sagaOrchestrator.getObject().onStepTimeout(sagaId, stepId, attempt),
-                Instant.now().plus(stepTimeout));
+                checkAt);
+        log.debug("timeout check for step {} of saga {} (attempt {}) armed for {}", stepId, sagaId, attempt, checkAt);
     }
 }
