@@ -42,6 +42,12 @@ public class GlobalExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
     }
 
+    @ExceptionHandler(IllegalStateException.class)
+    public ProblemDetail handleIllegalState(IllegalStateException ex) {
+        log.debug(ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     public ProblemDetail handleNoResourceFound(NoResourceFoundException ex) {
         log.debug("static resource not found: {}", ex.getResourcePath());

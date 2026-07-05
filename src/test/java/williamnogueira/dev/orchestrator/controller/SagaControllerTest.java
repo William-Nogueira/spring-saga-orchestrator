@@ -126,6 +126,41 @@ class SagaControllerTest {
     }
 
     @Test
+    @DisplayName("POST /sagas/{id}/retry resumes a failed saga with 202")
+    void retrySagaReturns202() throws Exception {
+        var saga = paymentSaga();
+        ReflectionTestUtils.setField(saga, "id", SAGA_ID);
+        when(sagaOrchestrator.retry(SAGA_ID)).thenReturn(saga);
+
+        mockMvc.perform(post("/sagas/{id}/retry", SAGA_ID))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(SAGA_ID.toString()));
+    }
+
+    @Test
+    @DisplayName("POST /sagas/{id}/retry returns 409 when the saga is not FAILED")
+    void retrySagaReturns409WhenNotFailed() throws Exception {
+        when(sagaOrchestrator.retry(SAGA_ID))
+                .thenThrow(new IllegalStateException("only FAILED sagas can be retried"));
+
+        mockMvc.perform(post("/sagas/{id}/retry", SAGA_ID))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("only FAILED sagas can be retried"));
+    }
+
+    @Test
+    @DisplayName("POST /sagas/{id}/compensate rolls back an in-flight saga with 202")
+    void forceCompensateReturns202() throws Exception {
+        var saga = paymentSaga();
+        ReflectionTestUtils.setField(saga, "id", SAGA_ID);
+        when(sagaOrchestrator.forceCompensate(SAGA_ID)).thenReturn(saga);
+
+        mockMvc.perform(post("/sagas/{id}/compensate", SAGA_ID))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(SAGA_ID.toString()));
+    }
+
+    @Test
     @DisplayName("GET /sagas/{id} returns 404 for an unknown id")
     void getSagaReturns404WhenMissing() throws Exception {
         when(sagaRepository.findWithStepsById(SAGA_ID)).thenReturn(Optional.empty());

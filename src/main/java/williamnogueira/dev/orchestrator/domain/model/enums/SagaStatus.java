@@ -14,7 +14,8 @@ public enum SagaStatus {
         return switch (this) {
             case STARTED -> EnumSet.of(COMPLETED, COMPENSATING, FAILED);
             case COMPENSATING -> EnumSet.of(COMPENSATED, FAILED);
-            case COMPENSATED, COMPLETED, FAILED -> EnumSet.noneOf(SagaStatus.class);
+            case FAILED -> EnumSet.of(COMPENSATING);
+            case COMPENSATED, COMPLETED -> EnumSet.noneOf(SagaStatus.class);
         };
     }
 }

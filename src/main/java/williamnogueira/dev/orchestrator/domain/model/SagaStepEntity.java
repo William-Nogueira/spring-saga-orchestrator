@@ -69,4 +69,9 @@ public class SagaStepEntity {
         this.attempts++;
         this.dispatchedAt = when;
     }
+
+    public void redispatch(Instant when) {
+        this.attempts++;
+        this.dispatchedAt = when;
+    }
 }

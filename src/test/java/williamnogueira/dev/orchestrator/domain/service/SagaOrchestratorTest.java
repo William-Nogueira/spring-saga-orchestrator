@@ -1,20 +1,12 @@
 package williamnogueira.dev.orchestrator.domain.service;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
-import tools.jackson.databind.json.JsonMapper;
 import williamnogueira.dev.orchestrator.TestcontainersConfiguration;
 import williamnogueira.dev.orchestrator.domain.factory.PaymentSagaFactory;
 import williamnogueira.dev.orchestrator.domain.factory.RefundSagaFactory;
-import williamnogueira.dev.orchestrator.domain.model.SagaEntity;
-import williamnogueira.dev.orchestrator.domain.model.SagaRepository;
 import williamnogueira.dev.orchestrator.domain.model.SagaStepEntity;
 import williamnogueira.dev.orchestrator.domain.model.dto.StepCommand;
 import williamnogueira.dev.orchestrator.domain.model.dto.StepReply;
@@ -25,40 +17,14 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.tuple;
 
 @SpringBootTest
-@Import(TestcontainersConfiguration.class)
-class SagaOrchestratorTest {
+@Import({TestcontainersConfiguration.class, RecordingDispatcherConfiguration.class})
+class SagaOrchestratorTest extends SagaEngineTestSupport {
 
-    private static final JsonMapper MAPPER = new JsonMapper();
-    private static final PaymentSagaFactory PAYMENT_FACTORY = new PaymentSagaFactory();
     private static final RefundSagaFactory REFUND_FACTORY = new RefundSagaFactory();
-
-    @Autowired
-    private SagaOrchestrator sagaOrchestrator;
-
-    @Autowired
-    private SagaRepository sagaRepository;
-
-    @Autowired
-    private RecordingCommandDispatcher commandDispatcher;
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class RecordingDispatcherConfiguration {
-
-        @Bean
-        @Primary
-        RecordingCommandDispatcher recordingCommandDispatcher() {
-            return new RecordingCommandDispatcher();
-        }
-    }
-
-    @AfterEach
-    void cleanUp() {
-        sagaRepository.deleteAll();
-        commandDispatcher.clear();
-    }
 
     @Test
     @DisplayName("a payment saga runs all three steps to COMPLETED")
@@ -163,7 +129,56 @@ class SagaOrchestratorTest {
         assertThat(saga.getStatus()).isEqualTo(SagaStatus.FAILED);
         assertThat(saga.getSteps())
                 .extracting(SagaStepEntity::getStatus)
-                .containsExactly(StepStatus.FAILED, StepStatus.FAILED, StepStatus.PENDING);
+                .containsExactly(StepStatus.COMPENSATION_FAILED, StepStatus.FAILED, StepStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("a manual retry resumes a failed compensation and grants one more attempt")
+    void manualRetryResumesFailedCompensation() {
+        var sagaId = sagaOrchestrator.start(paymentSaga()).getId();
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+        sagaOrchestrator.onReply(StepReply.failure(sagaId, commandDispatcher.lastCommand().stepId(), "capture declined"));
+        sagaOrchestrator.onReply(StepReply.failure(sagaId, commandDispatcher.lastCommand().stepId(), "void rejected"));
+
+        var failed = sagaRepository.findWithStepsById(sagaId).orElseThrow();
+        assertThat(failed.getStatus()).isEqualTo(SagaStatus.FAILED);
+        assertThat(failed.getSteps().getFirst().getStatus()).isEqualTo(StepStatus.COMPENSATION_FAILED);
+
+        sagaOrchestrator.retry(sagaId);
+        assertThat(commandDispatcher.lastCommand().stepName()).isEqualTo(PaymentSagaFactory.VOID_AUTHORIZATION);
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+
+        var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow();
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.COMPENSATED);
+        assertThat(saga.getSteps().getFirst().getStatus()).isEqualTo(StepStatus.COMPENSATED);
+    }
+
+    @Test
+    @DisplayName("a manual retry is rejected unless the saga is FAILED")
+    void manualRetryIsRejectedUnlessSagaFailed() {
+        var sagaId = sagaOrchestrator.start(paymentSaga()).getId();
+
+        assertThatIllegalStateException()
+                .isThrownBy(() -> sagaOrchestrator.retry(sagaId))
+                .withMessageContaining("only FAILED sagas");
+    }
+
+    @Test
+    @DisplayName("force-compensate abandons the in-flight step and rolls back the completed ones")
+    void forceCompensateAbandonsInFlightStepAndRollsBack() {
+        var sagaId = sagaOrchestrator.start(paymentSaga()).getId();
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+
+        sagaOrchestrator.forceCompensate(sagaId);
+
+        assertThat(commandDispatcher.lastCommand().stepName()).isEqualTo(PaymentSagaFactory.VOID_AUTHORIZATION);
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+
+        var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow();
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.COMPENSATED);
+        assertThat(saga.getSteps())
+                .extracting(SagaStepEntity::getStatus)
+                .containsExactly(StepStatus.COMPENSATED, StepStatus.FAILED, StepStatus.PENDING);
     }
 
     @Test
@@ -204,7 +219,4 @@ class SagaOrchestratorTest {
                 .doesNotThrowAnyException();
     }
 
-    private static SagaEntity paymentSaga() {
-        return PAYMENT_FACTORY.create(MAPPER.readTree("{\"orderId\":\"42\",\"amount\":100,\"currency\":\"BRL\"}"));
-    }
 }

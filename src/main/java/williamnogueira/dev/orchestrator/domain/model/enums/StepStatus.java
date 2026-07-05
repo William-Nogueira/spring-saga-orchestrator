@@ -9,6 +9,7 @@ public enum StepStatus {
     COMPLETED,
     FAILED,
     COMPENSATING,
+    COMPENSATION_FAILED,
     COMPENSATED;
 
     public Set<StepStatus> allowedTransitions() {
@@ -16,7 +17,8 @@ public enum StepStatus {
             case PENDING -> EnumSet.of(RUNNING);
             case RUNNING -> EnumSet.of(COMPLETED, FAILED);
             case COMPLETED -> EnumSet.of(COMPENSATING);
-            case COMPENSATING -> EnumSet.of(COMPENSATED, FAILED);
+            case COMPENSATING -> EnumSet.of(COMPENSATED, COMPENSATION_FAILED);
+            case COMPENSATION_FAILED -> EnumSet.of(COMPENSATING);
             case FAILED, COMPENSATED -> EnumSet.noneOf(StepStatus.class);
         };
     }

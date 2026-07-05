@@ -14,10 +14,11 @@ import williamnogueira.dev.orchestrator.domain.model.SagaRepository;
 import williamnogueira.dev.orchestrator.domain.model.enums.SagaStatus;
 import williamnogueira.dev.orchestrator.domain.model.enums.StepStatus;
 
-import java.time.Instant;
+import java.time.Duration;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 @SpringBootTest
 @Import({TestcontainersConfiguration.class, SimulatedPaymentParticipants.class})
@@ -39,7 +40,7 @@ class SagaEndToEndTest {
 
     @Test
     @DisplayName("a saga completes end to end over real rabbitmq queues")
-    void sagaCompletesPurelyOverRabbitMq() throws InterruptedException {
+    void sagaCompletesPurelyOverRabbitMq() {
         var sagaId = sagaOrchestrator
                 .start(PAYMENT_FACTORY.create(MAPPER.readTree("{\"orderId\":\"e2e-1\",\"amount\":249.90,\"currency\":\"BRL\"}")))
                 .getId();
@@ -57,7 +58,7 @@ class SagaEndToEndTest {
 
     @Test
     @DisplayName("a declined authorization rolls the saga back with nothing to compensate")
-    void authorizationDeclineCompensatesTheSaga() throws InterruptedException {
+    void authorizationDeclineCompensatesTheSaga() {
         var sagaId = sagaOrchestrator
                 .start(PAYMENT_FACTORY.create(MAPPER.readTree("{\"orderId\":\"e2e-2\",\"amount\":999999,\"currency\":\"BRL\"}")))
                 .getId();
@@ -72,7 +73,7 @@ class SagaEndToEndTest {
 
     @Test
     @DisplayName("a declined capture voids the authorization over real queues")
-    void captureDeclineCompensatesTheAuthorization() throws InterruptedException {
+    void captureDeclineCompensatesTheAuthorization() {
         var sagaId = sagaOrchestrator
                 .start(PAYMENT_FACTORY.create(MAPPER.readTree(
                         "{\"orderId\":\"e2e-3\",\"amount\":100,\"currency\":\"BRL\",\"failCapture\":true}")))
@@ -86,16 +87,12 @@ class SagaEndToEndTest {
         assertThat(saga.getSteps().get(2).getStatus()).isEqualTo(StepStatus.PENDING);
     }
 
-    private SagaEntity awaitTerminalState(UUID sagaId) throws InterruptedException {
-        var deadline = Instant.now().plusSeconds(15);
-        while (Instant.now().isBefore(deadline)) {
-            var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow();
-            if (saga.getStatus().allowedTransitions().isEmpty()) {
-                return saga;
-            }
-            Thread.sleep(200);
-        }
+    private SagaEntity awaitTerminalState(UUID sagaId) {
+        await().atMost(Duration.ofSeconds(15))
+                .pollInterval(Duration.ofMillis(200))
+                .until(() -> sagaRepository.findWithStepsById(sagaId).orElseThrow()
+                        .getStatus().allowedTransitions().isEmpty());
 
-        throw new AssertionError("saga %s did not reach a terminal state in time".formatted(sagaId));
+        return sagaRepository.findWithStepsById(sagaId).orElseThrow();
     }
 }

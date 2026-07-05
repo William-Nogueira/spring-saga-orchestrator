@@ -25,7 +25,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/sagas")
 @RequiredArgsConstructor
-@Tag(name = "Saga Management", description = "Start and inspect sagas")
+@Tag(name = "Saga Management", description = "Start, inspect and retry sagas")
 public class SagaController {
 
     private final SagaOrchestrator sagaOrchestrator;
@@ -63,5 +63,33 @@ public class SagaController {
     public ResponseEntity<SagaResponse> getSaga(@PathVariable UUID id) {
         var saga = sagaRepository.findWithStepsById(id).orElseThrow(() -> new SagaNotFoundException(id));
         return ResponseEntity.ok(SagaResponse.from(saga));
+    }
+
+    @Operation(
+            summary = "Retry a failed saga",
+            description = "Resumes the compensation of a FAILED saga, granting the failed step one more attempt.",
+            responses = {
+                    @ApiResponse(responseCode = "202", description = "Compensation resumed"),
+                    @ApiResponse(responseCode = "404", description = "No saga with this id"),
+                    @ApiResponse(responseCode = "409", description = "Saga is not in a retryable state")
+            }
+    )
+    @PostMapping("/{id}/retry")
+    public ResponseEntity<SagaResponse> retrySaga(@PathVariable UUID id) {
+        return ResponseEntity.accepted().body(SagaResponse.from(sagaOrchestrator.retry(id)));
+    }
+
+    @Operation(
+            summary = "Force-compensate a saga",
+            description = "Abandons the in-flight step of a STARTED saga and rolls back every completed step.",
+            responses = {
+                    @ApiResponse(responseCode = "202", description = "Compensation started"),
+                    @ApiResponse(responseCode = "404", description = "No saga with this id"),
+                    @ApiResponse(responseCode = "409", description = "Saga is not in flight")
+            }
+    )
+    @PostMapping("/{id}/compensate")
+    public ResponseEntity<SagaResponse> forceCompensate(@PathVariable UUID id) {
+        return ResponseEntity.accepted().body(SagaResponse.from(sagaOrchestrator.forceCompensate(id)));
     }
 }

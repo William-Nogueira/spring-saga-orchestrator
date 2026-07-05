@@ -11,22 +11,26 @@ import williamnogueira.dev.orchestrator.domain.model.dto.StepCommand;
 import williamnogueira.dev.orchestrator.domain.model.dto.StepReply;
 import williamnogueira.dev.orchestrator.domain.model.enums.SagaStatus;
 import williamnogueira.dev.orchestrator.domain.model.enums.StepStatus;
+import williamnogueira.dev.orchestrator.infra.config.SagaProperties;
+import williamnogueira.dev.orchestrator.infra.exception.SagaNotFoundException;
 import williamnogueira.dev.orchestrator.infra.messaging.CommandDispatcher;
 import williamnogueira.dev.orchestrator.infra.utils.TransactionUtils;
 
-import java.time.Instant;
+import java.time.Clock;
 import java.util.UUID;
 
 import static java.util.Objects.isNull;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class SagaOrchestrator {
 
     private final SagaRepository sagaRepository;
     private final CommandDispatcher commandDispatcher;
     private final StepTimeoutScheduler stepTimeoutScheduler;
+    private final SagaProperties sagaProperties;
+    private final Clock clock;
 
     @Transactional
     public SagaEntity start(SagaEntity saga) {
@@ -72,7 +76,7 @@ public class SagaOrchestrator {
 
     private void onCompensationReply(SagaEntity saga, SagaStepEntity step, StepReply reply) {
         if (reply.failure()) {
-            step.transitionTo(StepStatus.FAILED);
+            step.transitionTo(StepStatus.COMPENSATION_FAILED);
             saga.transitionTo(SagaStatus.FAILED);
             log.error("compensation '{}' of saga {} failed: {}; manual intervention required",
                     step.getCompensation(), saga.getId(), reply.reason());
@@ -91,7 +95,7 @@ public class SagaOrchestrator {
     private void dispatchNextCompensation(SagaEntity saga) {
         saga.lastCompletedStep().ifPresentOrElse(
                 step -> {
-                    step.markCompensating(Instant.now());
+                    step.markCompensating(clock.instant());
                     dispatchAfterCommit(
                             new StepCommand(saga.getId(), step.getId(), step.getCompensation(), saga.getPayload()),
                             step.getAttempts());
@@ -105,7 +109,7 @@ public class SagaOrchestrator {
     private void dispatchNextStep(SagaEntity saga) {
         saga.nextPendingStep().ifPresentOrElse(
                 step -> {
-                    step.markDispatched(Instant.now());
+                    step.markDispatched(clock.instant());
                     dispatchAfterCommit(
                             new StepCommand(saga.getId(), step.getId(), step.getName(), saga.getPayload()),
                             step.getAttempts());
@@ -129,18 +133,81 @@ public class SagaOrchestrator {
         }
 
         if (step.getStatus() == StepStatus.RUNNING) {
+            if (step.getAttempts() < sagaProperties.stepMaxAttempts()) {
+                retryDispatch(saga, step, step.getName());
+                return;
+            }
+
             step.transitionTo(StepStatus.FAILED);
-            log.warn("step '{}' of saga {} got no reply in time; compensating", step.getName(), sagaId);
+            log.warn("step '{}' of saga {} got no reply after {} attempts; compensating",
+                    step.getName(), sagaId, step.getAttempts());
             beginCompensation(saga);
             return;
         }
 
         if (step.getStatus() == StepStatus.COMPENSATING) {
-            step.transitionTo(StepStatus.FAILED);
+            if (step.getAttempts() < sagaProperties.stepMaxAttempts()) {
+                retryDispatch(saga, step, step.getCompensation());
+                return;
+            }
+
+            step.transitionTo(StepStatus.COMPENSATION_FAILED);
             saga.transitionTo(SagaStatus.FAILED);
-            log.error("compensation '{}' of saga {} got no reply in time; manual intervention required",
-                    step.getCompensation(), sagaId);
+            log.error("compensation '{}' of saga {} got no reply after {} attempts; manual intervention required",
+                    step.getCompensation(), sagaId, step.getAttempts());
         }
+    }
+
+    @Transactional
+    public SagaEntity retry(UUID sagaId) {
+        var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow(() -> new SagaNotFoundException(sagaId));
+        if (saga.getStatus() != SagaStatus.FAILED) {
+            throw new IllegalStateException("only FAILED sagas can be retried; saga %s is %s".formatted(sagaId, saga.getStatus()));
+        }
+
+        saga.transitionTo(SagaStatus.COMPENSATING);
+        var failedCompensations = saga.getSteps().stream()
+                .filter(step -> step.getStatus() == StepStatus.COMPENSATION_FAILED)
+                .toList();
+
+        if (failedCompensations.isEmpty()) {
+            dispatchNextCompensation(saga);
+        } else {
+            failedCompensations.forEach(step -> {
+                step.markCompensating(clock.instant());
+                dispatchAfterCommit(
+                        new StepCommand(saga.getId(), step.getId(), step.getCompensation(), saga.getPayload()),
+                        step.getAttempts());
+            });
+        }
+
+        log.info("saga {} manually retried; resuming compensation", sagaId);
+        return saga;
+    }
+
+    @Transactional
+    public SagaEntity forceCompensate(UUID sagaId) {
+        var saga = sagaRepository.findWithStepsById(sagaId).orElseThrow(() -> new SagaNotFoundException(sagaId));
+        if (saga.getStatus() != SagaStatus.STARTED) {
+            throw new IllegalStateException("only STARTED sagas can be force-compensated; saga %s is %s".formatted(sagaId, saga.getStatus()));
+        }
+
+        saga.getSteps().stream()
+                .filter(step -> step.getStatus() == StepStatus.RUNNING)
+                .forEach(step -> step.transitionTo(StepStatus.FAILED));
+
+        log.info("saga {} manually force-compensated", sagaId);
+        beginCompensation(saga);
+        return saga;
+    }
+
+    private void retryDispatch(SagaEntity saga, SagaStepEntity step, String command) {
+        step.redispatch(clock.instant());
+        log.warn("no reply for '{}' of saga {}; retrying (attempt {}/{})",
+                command, saga.getId(), step.getAttempts(), sagaProperties.stepMaxAttempts());
+        dispatchAfterCommit(
+                new StepCommand(saga.getId(), step.getId(), command, saga.getPayload()),
+                step.getAttempts());
     }
 
     private void dispatchAfterCommit(StepCommand command, int attempt) {
