@@ -1,4 +1,4 @@
-# spring-saga-orchestrator
+# Spring Saga Orchestrator
 
 ![Java](https://img.shields.io/badge/Java-25-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.1.0-green)
