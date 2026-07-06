@@ -14,6 +14,7 @@ import williamnogueira.dev.orchestrator.domain.model.enums.StepStatus;
 import williamnogueira.dev.orchestrator.infra.config.SagaProperties;
 import williamnogueira.dev.orchestrator.infra.exception.SagaNotFoundException;
 import williamnogueira.dev.orchestrator.infra.messaging.CommandDispatcher;
+import williamnogueira.dev.orchestrator.infra.metrics.SagaMetrics;
 import williamnogueira.dev.orchestrator.infra.utils.TransactionUtils;
 
 import java.time.Clock;
@@ -30,11 +31,13 @@ public class SagaOrchestrator {
     private final CommandDispatcher commandDispatcher;
     private final StepTimeoutScheduler stepTimeoutScheduler;
     private final SagaProperties sagaProperties;
+    private final SagaMetrics sagaMetrics;
     private final Clock clock;
 
     @Transactional
     public SagaEntity start(SagaEntity saga) {
         sagaRepository.save(saga);
+        sagaMetrics.sagaStarted(saga);
         dispatchNextStep(saga);
 
         log.info("saga {} started", saga.getId());
@@ -78,6 +81,7 @@ public class SagaOrchestrator {
         if (reply.failure()) {
             step.transitionTo(StepStatus.COMPENSATION_FAILED);
             saga.transitionTo(SagaStatus.FAILED);
+            sagaMetrics.sagaEnded(saga);
             log.error("compensation '{}' of saga {} failed: {}; manual intervention required",
                     step.getCompensation(), saga.getId(), reply.reason());
             return;
@@ -102,6 +106,7 @@ public class SagaOrchestrator {
                 },
                 () -> {
                     saga.transitionTo(SagaStatus.COMPENSATED);
+                    sagaMetrics.sagaEnded(saga);
                     log.info("saga {} compensated", saga.getId());
                 });
     }
@@ -116,6 +121,7 @@ public class SagaOrchestrator {
                 },
                 () -> {
                     saga.transitionTo(SagaStatus.COMPLETED);
+                    sagaMetrics.sagaEnded(saga);
                     log.info("saga {} completed", saga.getId());
                 });
     }
@@ -153,6 +159,7 @@ public class SagaOrchestrator {
 
             step.transitionTo(StepStatus.COMPENSATION_FAILED);
             saga.transitionTo(SagaStatus.FAILED);
+            sagaMetrics.sagaEnded(saga);
             log.error("compensation '{}' of saga {} got no reply after {} attempts; manual intervention required",
                     step.getCompensation(), sagaId, step.getAttempts());
         }

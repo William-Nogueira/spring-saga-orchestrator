@@ -2,6 +2,7 @@ package williamnogueira.dev.orchestrator.domain.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
@@ -23,9 +24,14 @@ public class StepTimeoutScheduler {
     public void scheduleTimeoutCheck(UUID sagaId, UUID stepId, int attempt) {
         var checkAt = clock.instant().plus(sagaProperties.stepTimeout().multipliedBy(attempt));
 
-        taskScheduler.schedule(
-                () -> sagaOrchestrator.getObject().onStepTimeout(sagaId, stepId, attempt),
-                checkAt);
+        taskScheduler.schedule(() -> {
+            MDC.put("sagaId", String.valueOf(sagaId));
+            try {
+                sagaOrchestrator.getObject().onStepTimeout(sagaId, stepId, attempt);
+            } finally {
+                MDC.remove("sagaId");
+            }
+        }, checkAt);
 
         log.debug("timeout check for step {} of saga {} (attempt {}) armed for {}", stepId, sagaId, attempt, checkAt);
     }

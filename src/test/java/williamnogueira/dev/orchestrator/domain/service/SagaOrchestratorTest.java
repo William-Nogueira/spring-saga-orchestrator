@@ -1,7 +1,9 @@
 package williamnogueira.dev.orchestrator.domain.service;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import williamnogueira.dev.orchestrator.TestcontainersConfiguration;
@@ -210,6 +212,27 @@ class SagaOrchestratorTest extends SagaEngineTestSupport {
         assertThat(commandDispatcher.commands())
                 .extracting(StepCommand::stepName)
                 .containsExactly(RefundSagaFactory.ISSUE_REFUND, RefundSagaFactory.REVERSE_LEDGER_ENTRY);
+    }
+
+    @Test
+    @DisplayName("saga outcomes are recorded as metrics")
+    void sagaOutcomesAreRecordedAsMetrics(@Autowired MeterRegistry meterRegistry) {
+        var startedBefore = counterValue(meterRegistry, "saga.started", "type", "payment");
+        var completedBefore = counterValue(meterRegistry, "saga.ended", "type", "payment", "outcome", "completed");
+
+        var sagaId = sagaOrchestrator.start(paymentSaga()).getId();
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+        sagaOrchestrator.onReply(StepReply.success(sagaId, commandDispatcher.lastCommand().stepId()));
+
+        assertThat(counterValue(meterRegistry, "saga.started", "type", "payment")).isEqualTo(startedBefore + 1);
+        assertThat(counterValue(meterRegistry, "saga.ended", "type", "payment", "outcome", "completed"))
+                .isEqualTo(completedBefore + 1);
+    }
+
+    private static double counterValue(MeterRegistry meterRegistry, String name, String... tags) {
+        var counter = meterRegistry.find(name).tags(tags).counter();
+        return counter == null ? 0 : counter.count();
     }
 
     @Test

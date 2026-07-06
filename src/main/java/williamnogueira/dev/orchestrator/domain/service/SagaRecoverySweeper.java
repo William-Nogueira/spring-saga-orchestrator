@@ -2,6 +2,7 @@ package williamnogueira.dev.orchestrator.domain.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -37,9 +38,14 @@ public class SagaRecoverySweeper {
         for (var step : inFlight) {
             var deadline = step.getDispatchedAt().plus(sagaProperties.stepTimeout().multipliedBy(step.getAttempts()));
             if (now.isAfter(deadline)) {
-                log.warn("sweeper found stuck step '{}' of saga {} (attempt {}, dispatched {})",
-                        step.getName(), step.getSaga().getId(), step.getAttempts(), step.getDispatchedAt());
-                sagaOrchestrator.onStepTimeout(step.getSaga().getId(), step.getId(), step.getAttempts());
+                MDC.put("sagaId", String.valueOf(step.getSaga().getId()));
+                try {
+                    log.warn("sweeper found stuck step '{}' of saga {} (attempt {}, dispatched {})",
+                            step.getName(), step.getSaga().getId(), step.getAttempts(), step.getDispatchedAt());
+                    sagaOrchestrator.onStepTimeout(step.getSaga().getId(), step.getId(), step.getAttempts());
+                } finally {
+                    MDC.remove("sagaId");
+                }
             }
         }
     }

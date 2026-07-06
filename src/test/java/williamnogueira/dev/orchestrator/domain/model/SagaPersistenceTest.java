@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 import williamnogueira.dev.orchestrator.TestcontainersConfiguration;
 import williamnogueira.dev.orchestrator.domain.model.enums.SagaStatus;
 import williamnogueira.dev.orchestrator.domain.model.enums.StepStatus;
@@ -40,8 +41,10 @@ class SagaPersistenceTest {
         entityManager.clear();
 
         var reloaded = sagaRepository.findById(savedId).orElseThrow();
+        var mapper = new JsonMapper();
         assertThat(reloaded.getName()).isEqualTo("payment");
-        assertThat(reloaded.getPayload()).isEqualTo("{\"orderId\":\"42\",\"amount\":100}");
+        assertThat(mapper.readTree(reloaded.getPayload()))
+                .isEqualTo(mapper.readTree("{\"orderId\":\"42\",\"amount\":100}"));
         assertThat(reloaded.getStatus()).isEqualTo(SagaStatus.STARTED);
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getVersion()).isNotNull();
